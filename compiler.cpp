@@ -30,6 +30,7 @@
 #include <iostream>
 #include <fstream>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <string>
 #include <regex>
@@ -241,6 +242,7 @@ static LLVMContext TheContext;
 static IRBuilder<> Builder(TheContext);
 static std::unique_ptr<Module> TheModule;
 static std::map<std::string, Value *> NamedValues;
+static std::unordered_map<Value*, std::vector<int>> ValueDimensions; // map Value * to their dimensions (workaround for looking into llvm array)
 static std::unique_ptr<legacy::FunctionPassManager> TheFPM;
 static std::unique_ptr<MiniAPLJIT> TheJIT;
 
@@ -334,7 +336,8 @@ Value *LogErrorV(const char *Str) {
 // ---------------------------------------------------------------------------
 Value *ProgramAST::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
-  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "ProgramAST\n");
+  // Entry of the codegen procedure
+  // kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "ProgramAST\n");
   for (auto& S : Stmts) {
     S->codegen(F);
   }
@@ -343,7 +346,8 @@ Value *ProgramAST::codegen(Function* F) {
 
 Value *AssignStmtAST::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
-  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "AssignStmtAST\n");
+  // Assign Value* to a variable
+  // kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "AssignStmtAST\n");
   // Create Block for RHS
   auto RHSV = RHS->codegen(F); // should return an Array
   NamedValues[Name->Name] = RHSV;
@@ -352,50 +356,183 @@ Value *AssignStmtAST::codegen(Function* F) {
 
 Value *ExprStmtAST::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
-  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "ExprStmtAST\n");
-  Val->codegen(F);
+  // Print the expression.
+  // kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "ExprStmtAST\n");
+  Value* val = Val->codegen(F);
+  if (!val) 
+    return nullptr;
+  vector<int> dimensions = ValueDimensions.at(val);
+  vector<int> piDimensions(dimensions.size()+1);
+
+  piDimensions[0] = 1;
+  for (size_t i = 1; i <= dimensions.size(); ++i) {
+    piDimensions[i] = piDimensions[i-1] * dimensions[dimensions.size()-i];
+  }
+
+  for (auto i = 0; i < piDimensions.back(); ++i) {
+    auto ite = piDimensions.begin();
+    //print '['
+    ite = piDimensions.begin();
+    while (ite != piDimensions.end() && i % (*ite) == 0 ) {
+      kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "[");
+      ++ite;
+    }
+    // print element
+    auto elementPtr = Builder.CreateGEP(val, {intConst(32, 0), intConst(32, i)});
+    auto element = Builder.CreateLoad(elementPtr);
+    kprintf_val(TheModule.get(), Builder.GetInsertBlock(), element);
+        // print ']'
+    ite = piDimensions.begin();
+    while (ite != piDimensions.end() && (i+1) % (*ite) == 0) {
+      kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "]");
+      ++ite;
+    }
+  }
+  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "\n");
   return nullptr;
 }
 
 Value *NumberASTNode::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
-  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "NumberASTNode\n");
+  // return a constant int32 Value* object
+  // kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "NumberASTNode\n");
   return intConst(32, Val);
 }
 
 Value *VariableASTNode::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
-  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "VariableASTNode\n");
+  // Return the pointer to the variable
+  // kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "VariableASTNode\n");
   auto V = NamedValues[Name];
-  if (!V)
+  if (!V) {
     LogError("Unassigned variable");
-  return nullptr;
+    return nullptr;
+  }
+  return V;
 }
 
 Value *CallASTNode::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
-  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "CallASTNode\n");
+  // Implemnet functions and return the result Value*
+  // kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "CallASTNode\n");
   if (Callee == "mkArray") {
-    auto arrayPtr = ArrayType::get(intTy(32), Args.size());
-    auto arrayAlloc = Builder.CreateAlloca(arrayPtr);
 
     // Issue: how to get the value of PHI Node if I want to use loop block?
     
-    for (auto i = 0; i < Args.size(); ++i) {
+    auto n_dim = static_cast<NumberASTNode*>(Args[0].get())->Val;
+    std::vector<int> dimensions(n_dim);
+    for (auto i = 1; i <= n_dim; ++i) {
+      dimensions[i-1] = static_cast<NumberASTNode*>(Args[i].get())->Val;
+    }
+
+    auto arrayPtr = ArrayType::get(intTy(32), Args.size() - n_dim - 1);
+    auto arrayAlloc = Builder.CreateAlloca(arrayPtr);
+
+    for (size_t i = 0; i < Args.size() - n_dim - 1; ++i) {
       auto element = Builder.CreateGEP(arrayAlloc, {intConst(32, 0), intConst(32, i)});
-      auto val = static_cast<NumberASTNode*>(Args[i].get())->Val;
+      auto val = static_cast<NumberASTNode*>(Args[n_dim+i+1].get())->Val;
       Builder.CreateStore(intConst(32, val), element);
     }
+
+    ValueDimensions[arrayAlloc] = dimensions;
     // Issue: How to return a array, or is it correct to return "array" (perhaps should return function pointers)?
     return arrayAlloc;
   } else if (Callee == "neg") {
 
-  } else if (Callee == "exponent") {
+    auto oldArray = static_cast<VariableASTNode*>(Args[0].get())->codegen(F);
+    if (!oldArray) 
+      return nullptr;
     
-  } else if (Callee == "add") {
+    auto dimensions = ValueDimensions.at(oldArray);
+    auto size = 1;
+    for (auto dim : dimensions) {
+      size *= dim;
+    }
+
+    auto arrayPtr = ArrayType::get(intTy(32), size);
+    auto arrayAlloc = Builder.CreateAlloca(arrayPtr);
+
+    for (auto i = 0; i < size; ++i) {
+      auto newElement = Builder.CreateGEP(arrayAlloc, {intConst(32, 0), intConst(32, i)});
+      auto oldElement = Builder.CreateGEP(oldArray, {intConst(32, 0), intConst(32, i)});
+      auto oldVal = Builder.CreateLoad(oldElement);
+      auto subtmp = Builder.CreateSub(intConst(32, 0), oldVal, Callee);
+      Builder.CreateStore(subtmp, newElement);
+    }
+
+    ValueDimensions[arrayAlloc] = dimensions;
+    return arrayAlloc;
+  } else if (Callee == "exp") {
+
+    auto oldArray = static_cast<VariableASTNode*>(Args[0].get())->codegen(F);
+    auto exponet = static_cast<NumberASTNode*>(Args[1].get())->Val;
+    if (!oldArray) 
+      return nullptr;
     
-  } else if (Callee == "sub") {
+    auto dimensions = ValueDimensions.at(oldArray);
+    auto size = 1;
+    for (auto dim : dimensions) {
+      size *= dim;
+    }
+
+    auto arrayPtr = ArrayType::get(intTy(32), size);
+    auto arrayAlloc = Builder.CreateAlloca(arrayPtr);
+
+    for (auto i = 0; i < size; ++i) {
+      auto newElement = Builder.CreateGEP(arrayAlloc, {intConst(32, 0), intConst(32, i)});
+      auto oldElement = Builder.CreateGEP(oldArray, {intConst(32, 0), intConst(32, i)});
+
+      if (exponet == 0) {
+        Builder.CreateStore(intConst(32, 0), newElement);
+      } else if (exponet == 1) {
+        auto oldVal = Builder.CreateLoad(oldElement);
+        auto multmp = Builder.CreateSub(intConst(32, 0), oldVal, Callee);
+        Builder.CreateStore(multmp, newElement);
+      } else { // exponent > 1
+        auto oldVal = Builder.CreateLoad(oldElement);
+        auto multmp = Builder.CreateMul(oldVal, oldVal, Callee);
+        for (auto j = 2; j < exponet; ++j) {
+          multmp = Builder.CreateMul(multmp, oldVal, Callee);
+        }
+        Builder.CreateStore(multmp, newElement);
+      }
+    }
+
+    ValueDimensions[arrayAlloc] = dimensions;
+    return arrayAlloc;
+  } else if (Callee == "add" || Callee == "sub") {
+
+    auto oldArrayL = static_cast<VariableASTNode*>(Args[0].get())->codegen(F);
+    auto oldArrayR = static_cast<VariableASTNode*>(Args[1].get())->codegen(F);
+    if (!oldArrayL || !oldArrayR) 
+      return nullptr;
     
+    auto dimensions = ValueDimensions.at(oldArrayL); // Add error handling for unequal dimension?
+    auto size = 1;
+    for (auto dim : dimensions) {
+      size *= dim;
+    }
+
+    auto arrayPtr = ArrayType::get(intTy(32), size);
+    auto arrayAlloc = Builder.CreateAlloca(arrayPtr);
+
+    for (auto i = 0; i < size; ++i) {
+      auto newElement = Builder.CreateGEP(arrayAlloc, {intConst(32, 0), intConst(32, i)});
+      auto oldElementL = Builder.CreateGEP(oldArrayL, {intConst(32, 0), intConst(32, i)});
+      auto oldElementR = Builder.CreateGEP(oldArrayR, {intConst(32, 0), intConst(32, i)});
+
+      auto oldValL = Builder.CreateLoad(oldElementL);
+      auto oldValR = Builder.CreateLoad(oldElementR);
+      Value *optmp;
+      if (Callee == "add")
+        optmp = Builder.CreateAdd(oldValL, oldValR, Callee);
+      else
+        optmp = Builder.CreateSub(oldValL, oldValR, Callee);
+      Builder.CreateStore(optmp, newElement);
+    }
+
+    ValueDimensions[arrayAlloc] = dimensions;
+    return arrayAlloc;
   } else if (Callee == "reduce") {
     
   } else if (Callee == "expand") {
@@ -628,7 +765,7 @@ int main(const int argc, const char** argv) {
   Builder.CreateRet(nullptr);
 
   // NOTE: You may want to uncomment this line to see the LLVM IR you have generated
-  TheModule->print(errs(), nullptr);
+  // TheModule->print(errs(), nullptr);
 
   // Initialize the JIT, compile the module to a function,
   // find the function and then run it.
