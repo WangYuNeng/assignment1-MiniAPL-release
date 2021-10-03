@@ -346,15 +346,14 @@ Value *AssignStmtAST::codegen(Function* F) {
   kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "AssignStmtAST\n");
   // Create Block for RHS
   auto RHSV = RHS->codegen(F); // should return an Array
-  // Allocate memory to NameV according to RHSV
-  auto NameV = Name->codegen(F);
-  // element-wise assignment
+  NamedValues[Name->Name] = RHSV;
   return nullptr;
 }
 
 Value *ExprStmtAST::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
   kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "ExprStmtAST\n");
+  Val->codegen(F);
   return nullptr;
 }
 
@@ -367,9 +366,9 @@ Value *NumberASTNode::codegen(Function* F) {
 Value *VariableASTNode::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
   kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "VariableASTNode\n");
-  // auto V = NamedValues[Name];
-  // if (!V)
-    // LogError("Unknown variable name");
+  auto V = NamedValues[Name];
+  if (!V)
+    LogError("Unassigned variable");
   return nullptr;
 }
 
@@ -377,12 +376,18 @@ Value *CallASTNode::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
   kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "CallASTNode\n");
   if (Callee == "mkArray") {
-    int n_dim = static_cast<NumberASTNode*>(Args[0].get())->Val;
-    vector<int> dim(n_dim);
-    for (int i=0; i<n_dim; ++i) {
-      dim[i] = static_cast<NumberASTNode*>(Args[i+1].get())->Val;
+    auto arrayPtr = ArrayType::get(intTy(32), Args.size());
+    auto arrayAlloc = Builder.CreateAlloca(arrayPtr);
+
+    // Issue: how to get the value of PHI Node if I want to use loop block?
+    
+    for (auto i = 0; i < Args.size(); ++i) {
+      auto element = Builder.CreateGEP(arrayAlloc, {intConst(32, 0), intConst(32, i)});
+      auto val = static_cast<NumberASTNode*>(Args[i].get())->Val;
+      Builder.CreateStore(intConst(32, val), element);
     }
-    // allocate memory and assign value o the array
+    // Issue: How to return a array, or is it correct to return "array" (perhaps should return function pointers)?
+    return arrayAlloc;
   } else if (Callee == "neg") {
 
   } else if (Callee == "exponent") {
@@ -623,7 +628,7 @@ int main(const int argc, const char** argv) {
   Builder.CreateRet(nullptr);
 
   // NOTE: You may want to uncomment this line to see the LLVM IR you have generated
-  // TheModule->print(errs(), nullptr);
+  TheModule->print(errs(), nullptr);
 
   // Initialize the JIT, compile the module to a function,
   // find the function and then run it.
