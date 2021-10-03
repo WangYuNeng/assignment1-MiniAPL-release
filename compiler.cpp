@@ -334,31 +334,72 @@ Value *LogErrorV(const char *Str) {
 // ---------------------------------------------------------------------------
 Value *ProgramAST::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
+  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "ProgramAST\n");
+  for (auto& S : Stmts) {
+    S->codegen(F);
+  }
   return nullptr;
 }
 
 Value *AssignStmtAST::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
+  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "AssignStmtAST\n");
+  // Create Block for RHS
+  auto RHSV = RHS->codegen(F); // should return an Array
+  // Allocate memory to NameV according to RHSV
+  auto NameV = Name->codegen(F);
+  // element-wise assignment
   return nullptr;
 }
 
 Value *ExprStmtAST::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
+  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "ExprStmtAST\n");
   return nullptr;
 }
 
 Value *NumberASTNode::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
-  return nullptr;
+  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "NumberASTNode\n");
+  return intConst(32, Val);
 }
 
 Value *VariableASTNode::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
+  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "VariableASTNode\n");
+  // auto V = NamedValues[Name];
+  // if (!V)
+    // LogError("Unknown variable name");
   return nullptr;
 }
 
 Value *CallASTNode::codegen(Function* F) {
   // STUDENTS: FILL IN THIS FUNCTION
+  kprintf_str(TheModule.get(), Builder.GetInsertBlock(), "CallASTNode\n");
+  if (Callee == "mkArray") {
+    int n_dim = static_cast<NumberASTNode*>(Args[0].get())->Val;
+    vector<int> dim(n_dim);
+    for (int i=0; i<n_dim; ++i) {
+      dim[i] = static_cast<NumberASTNode*>(Args[i+1].get())->Val;
+    }
+    // allocate memory and assign value o the array
+  } else if (Callee == "neg") {
+
+  } else if (Callee == "exponent") {
+    
+  } else if (Callee == "add") {
+    
+  } else if (Callee == "sub") {
+    
+  } else if (Callee == "reduce") {
+    
+  } else if (Callee == "expand") {
+    
+  } else if (Callee == "concat") {
+    
+  } else {
+    LogError("Unknown function");
+  }
   return nullptr;
 }
 

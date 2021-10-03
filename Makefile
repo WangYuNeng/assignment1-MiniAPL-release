@@ -1,5 +1,5 @@
-LLVM_CONFIG ?= /Users/dillon/Downloads/clang+llvm-6.0.0-x86_64-apple-darwin/bin/llvm-config
-CXX ?= /Users/dillon/Downloads/clang+llvm-6.0.0-x86_64-darwin-apple/bin/clang++
+LLVM_CONFIG ?= /usr/bin/llvm-config
+CXX ?= /usr/lib//bin/clang++
 
 SRC_DIR := src
 BIN_DIR := bin
